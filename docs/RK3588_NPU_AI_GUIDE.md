@@ -48,6 +48,7 @@ RKNN 설정(optimization_level, quantization 옵션 등)을 조작하는 것은 
 | 2 | H=1 중간 Conv | `failed to submit!, task number: N` | `Pad(H→4)` + `Slice(row 0)` |
 | 3 | `Add→ReLU` broadcast | `AddReLU` 퓨전 시 broadcast 오류 | `Expand`로 사전 확장 |
 | 4 | `rknn.api` + `rknnlite.api` 동시 import | 프로세스 충돌 | 변환/추론 스크립트 분리 |
+| 5 | `Squeeze` / `Unsqueeze` | 4D↔3D 변환 시 데이터 뒤섞임 (cosine ≈ -0.01) | 모델 I/O를 3D로 변경하여 제거 |
 
 ### 버그 1: ReduceMean → depthwise Conv
 
@@ -77,6 +78,18 @@ Slice(start=0, end=1, axis=2)   # H: 4 → 1
 # f1: (1,C,1,W) → Add에 앞서 명시적 확장
 Expand(shape=[1, C, H_f2, W])   # (1,C,1,W) → (1,C,H,W)
 # 이제 same-shape Add → broadcast 없음 → AddReLU 퓨전 정상
+```
+
+### 버그 5: Squeeze / Unsqueeze (CitriNet에서 발견)
+
+RKNN 내부에서 NHWC 레이아웃의 axis에 Squeeze를 적용하여 출력 데이터가 완전히 뒤섞인다.
+`Reshape`으로 교체해도 동일하게 실패한다.
+
+```python
+# 우회: Squeeze/Unsqueeze를 모델에서 완전히 제거하고 3D I/O 사용
+# 입력: [1, 80, 1, 300] → [1, 80, 300]  (Squeeze 제거)
+# 출력: [1, 2049, 1, 38] → [1, 2049, 38]  (Unsqueeze 제거)
+# 주의: RKNN은 3D 입력(1D Conv)을 정상 처리함 — 문제는 4D↔3D 변환 자체
 ```
 
 ---
